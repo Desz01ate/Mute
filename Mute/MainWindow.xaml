@@ -5,8 +5,11 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Mute"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="MainWindow" Height="225" Width="400">
     <Grid>
+        <Label Content="Active Window : " HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top"/>
+        <Label x:Name="lbl_ActiveWindow" Content="N/A" HorizontalAlignment="Left" Margin="113,10,0,0" VerticalAlignment="Top"/>
+        <Button Content="Exception" HorizontalAlignment="Left" Margin="323,16,0,0" VerticalAlignment="Top" Width="67" Click="Button_Click"/>
 
     </Grid>
 </Window>

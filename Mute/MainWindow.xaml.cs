@@ -1,5 +1,8 @@
-﻿using System;
+﻿using CSCore.CoreAudioAPI;
+using Mute.Engine;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -13,6 +16,10 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using Mute.Sessions;
+using Mute.Helpers;
+using System.IO;
+using Newtonsoft.Json;
 
 namespace Mute
 {
@@ -21,47 +28,79 @@ namespace Mute
     /// </summary>
     public partial class MainWindow : Window
     {
+        private readonly ProcessMonitor monitor;
+        private readonly object lockObject = new object();
+        private readonly IReadOnlyList<string> exceptions;
         public MainWindow()
         {
             InitializeComponent();
-            dele = new WinEventDelegate(WinEventProc);
-            IntPtr m_hhook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, dele, 0, 0, WINEVENT_OUTOFCONTEXT);
 
+            using var cacheFs = CacheFileManager.GetFileCache("exclude.json");
+            using var streamReader = new StreamReader(cacheFs);
+            exceptions = JsonConvert.DeserializeObject<List<string>>(streamReader.ReadToEnd());
+
+            monitor = ProcessMonitor.GetInstance();
+            monitor.OnWindowChanged += Mon_OnWindowChanged;
+            monitor.OnStopped += Monitor_OnStopped;
+            this.Closing += MainWindow_Closing;
         }
 
-        WinEventDelegate dele = null;
-
-        delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
-
-        [DllImport("user32.dll")]
-        static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
-
-        private const uint WINEVENT_OUTOFCONTEXT = 0;
-        private const uint EVENT_SYSTEM_FOREGROUND = 3;
-
-        [DllImport("user32.dll")]
-        static extern IntPtr GetForegroundWindow();
-
-        [DllImport("user32.dll")]
-        static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
-
-        private string GetActiveWindowTitle()
+        private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            const int nChars = 256;
-            IntPtr handle = IntPtr.Zero;
-            StringBuilder Buff = new StringBuilder(nChars);
-            handle = GetForegroundWindow();
+            var t = new System.Threading.Thread(() => this.monitor?.Dispose());
+            t.SetApartmentState(System.Threading.ApartmentState.MTA);
+            t.Start();
+        }
 
-            if (GetWindowText(handle, Buff, nChars) > 0)
+        [STAThread]
+        private void Monitor_OnStopped(object sender, EventArgs e)
+        {
+            using var sessionManager = SessionManager.GetDefaultAudioSessionManager2(DataFlow.Render);
+            using var sessionEnumerator = sessionManager.GetSessionEnumerator();
+            foreach (var session in sessionEnumerator)
             {
-                return Buff.ToString();
+                using var simpleVolume = session.QueryInterface<SimpleAudioVolume>();
+                using var sessionControl = session.QueryInterface<AudioSessionControl2>();
+                simpleVolume.IsMuted = false;
             }
-            return null;
         }
 
-        public void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+        private void Mon_OnWindowChanged(Process proc)
         {
-            Console.WriteLine(GetActiveWindowTitle() + "\r\n");
+            this.Dispatcher.Invoke(() => this.lbl_ActiveWindow.Content = proc.ProcessName);
+
+            using var sessionManager = SessionManager.GetDefaultAudioSessionManager2(DataFlow.Render);
+            using var sessionEnumerator = sessionManager.GetSessionEnumerator();
+            foreach (var session in sessionEnumerator)
+            {
+                using var simpleVolume = session.QueryInterface<SimpleAudioVolume>();
+                using var sessionControl = session.QueryInterface<AudioSessionControl2>();
+                if (exceptions.Contains(sessionControl.Process.ProcessName))
+                {
+                    continue;
+                }
+
+                if (sessionControl.ProcessID == proc.Id)
+                {
+                    simpleVolume.IsMuted = false;
+                    simpleVolume.MasterVolume = 1f;
+                }
+                else if (proc.ProcessName == "ApplicationFrameHost" && sessionControl.Process.ProcessName == "WWAHost")
+                {
+                    simpleVolume.IsMuted = false;
+                    simpleVolume.MasterVolume = 1f;
+                }
+                else
+                {
+                    simpleVolume.IsMuted = true;
+                }
+            }
+        }
+
+        private void Button_Click(object sender, RoutedEventArgs e)
+        {
+            var config = new ExceptionConfigurationWindow();
+            config.ShowDialog();
         }
     }
 }

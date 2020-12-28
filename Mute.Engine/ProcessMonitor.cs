@@ -45,7 +45,7 @@ namespace Mute.Engine
                 OnWindowChanged?.Invoke(proc);
                 activeHandle = handle;
             }
-            catch
+            catch (Exception ex)
             {
                 // To be implement.
             }
